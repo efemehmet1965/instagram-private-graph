@@ -1080,17 +1080,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve(*_html(200, html_content))
                 return
             elif method == 'POST':
-                is_blocked, remaining_secs = is_rate_limited(client_ip)
-                if is_blocked:
-                    if remaining_secs > 60:
-                        wait_text = f"{remaining_secs // 60 + 1} dakika"
-                    else:
-                        wait_text = f"{max(1, remaining_secs)} saniye"
-                    msg = f"Cok fazla hatali deneme yapildi. Lutfen {wait_text} sonra tekrar deneyin."
-                    html_content = render_login_page(error_msg=msg, base_path=BASE_PATH)
-                    self._serve(*_html(429, html_content))
-                    return
-
                 try:
                     content_len = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(min(content_len, 4096)).decode('utf-8', errors='replace')
@@ -1106,11 +1095,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._redirect(home_url, cookie=cookie)
                     return
                 else:
-                    remaining_attempts = record_failed_attempt(client_ip)
-                    if remaining_attempts == 0:
-                        msg = f"Hatali sifre! Erisiminiz {LOCKOUT_SECONDS} saniye kilitlendi."
-                    else:
-                        msg = f"Hatali sifre girdiniz. Kalan deneme hakki: {remaining_attempts}"
+                    # Otomasyon/bot saldirilarini engellemek icin 1 saniyelik guvenli bekleme
+                    time.sleep(1.0)
+                    msg = "Hatali sifre girdiniz. Lutfen tekrar deneyin."
                     html_content = render_login_page(error_msg=msg, base_path=BASE_PATH)
                     self._serve(*_html(401, html_content))
                     return
