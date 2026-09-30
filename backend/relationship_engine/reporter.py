@@ -11,7 +11,8 @@ def _fmt_pct(n, total):
 
 def render_text_report(meta: dict, registry, by_tier_map,
                         cotag_edges, alt_account_data,
-                        loc_data, friendship_summary, target_internal):
+                        loc_data, friendship_summary, target_internal,
+                        kinship_data=None):
     """Insan-okur rapor. registry sirali olmaya gerek yok; by_tier_map zaten
     grouplanmis."""
     buf = io.StringIO()
@@ -61,6 +62,8 @@ def render_text_report(meta: dict, registry, by_tier_map,
             elif p.context_class == 'suggested':
                 flags.append('S')
                                                       
+            if p.kinship_match:
+                flags.append('KIN')
             hc = p.hop_class
             if hc == '1hop_stable':
                 flags.append('★')
@@ -72,6 +75,9 @@ def render_text_report(meta: dict, registry, by_tier_map,
                 flags.append('2H')
             f = ''.join(flags)
             ev = []
+            if p.kinship_match:
+                token = (p.kinship_detail or {}).get('matched_token', '')
+                ev.append(f'kin[{p.kinship_type}:{token}]')
             if len(p.likes_to_x) or len(p.comments_to_x):
                 ev.append(f'p29[L{len(p.likes_to_x)}/C{len(p.comments_to_x)}]')
             if p.tags_of_target_count:
@@ -95,7 +101,23 @@ def render_text_report(meta: dict, registry, by_tier_map,
             w(f'  {p.score:>6.1f}  {p.pk:<14}  @{un:<27} {f:<10} {ev_str}\n')
         w('\n')
 
-                                           
+    if kinship_data and kinship_data.get('matches'):
+        matches = kinship_data['matches']
+        w(f'KINSHIP & SURNAME / RELATIVE ANALYSIS ({len(matches)} matches)\n')
+        w('-' * 78 + '\n')
+        target_name = kinship_data.get("target_full_name") or "-"
+        target_sn = kinship_data.get("target_primary_surname") or "-"
+        w(f'  Target Name: {target_name} | Target Surname: {target_sn}\n\n')
+        w(f'  {"match_type":<20} {"confidence":<10} {"username":<24} {"full_name":<24} matched_token\n')
+        for m in matches:
+            un = f"@{m.get('username') or '?'}"[:23]
+            fn = (m.get('full_name') or '-')[:23]
+            m_type = m.get('match_type', '')[:19]
+            conf = m.get('confidence', '')[:9]
+            tok = str(m.get('matched_token', ''))
+            w(f'  {m_type:<20} {conf:<10} {un:<24} {fn:<24} {tok}\n')
+        w('\n')
+
     bidir = meta.get('bidirectional') or {}
     if bidir:
         w('BIDIRECTIONAL CONFIRMATIONS\n')

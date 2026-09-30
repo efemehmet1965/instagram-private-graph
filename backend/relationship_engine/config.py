@@ -131,7 +131,14 @@ WEIGHTS = {
     'bootstrap_autocomplete_mid':      15,                             
     'bootstrap_autocomplete_tail':      8,                                      
     'bootstrap_section_test':          10,                           
-    'bootstrap_multi_capture_bonus':   15,                                       
+    'bootstrap_multi_capture_bonus':   15,
+
+    # Kinship & Surname Engine
+    'kinship_exact_surname':           35,
+    'kinship_compound_surname':        22,
+    'kinship_username_surname':        14,
+    'kinship_username_stem':           10,
+    'kinship_bio_declaration':         45,
 }
 
 

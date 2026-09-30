@@ -14,7 +14,8 @@ from . import (chaining, discover, archeology, tagged, news,
                 friendship, mutual, bidirectional, cotagged_graph,
                 temporal, altaccount, locations, scoring, tiers,
                 exporter, reporter, filters, verification, target_intel,
-                reciprocal, banyan as banyan_module, bootstrap, stories)
+                reciprocal, banyan as banyan_module, bootstrap, stories,
+                kinship)
 
 
 def _ensure_utf8():
@@ -126,6 +127,12 @@ def run(username: str, root: str = DEFAULT_ARTIFACT_ROOT,
     sources_meta['target_intel_built'] = bool(target_meta)
     sources_meta['activity_present'] = activity.get('present', False)
 
+    print('[13b/14] Kinship & surname analysis...')
+    sources_meta['kinship'] = kinship.analyze(
+        registry, target_username=username, target_intel=target_meta, arts=arts)
+    k_matches = sources_meta['kinship'].get('total_matches', 0)
+    print(f'    -> {k_matches} kinship / surname match(es) identified')
+
     print('[13/13] Temporal + alt-account + locations...')
     sources_meta['temporal'] = temporal.analyze(registry)
     sources_meta['altaccount'] = altaccount.analyze(registry, target_pk)
@@ -189,7 +196,8 @@ def run(username: str, root: str = DEFAULT_ARTIFACT_ROOT,
         cotag_data.get('edges') or [],
         sources_meta['altaccount'],
         sources_meta['locations'],
-        fs_summary, target_internal)
+        fs_summary, target_internal,
+        sources_meta.get('kinship'))
     text_path = arts.write_text(subdir, 'relationship_report.txt', text)
     print(f'  -> {text_path}')
 

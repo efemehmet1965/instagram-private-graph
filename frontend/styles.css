@@ -205,6 +205,7 @@ tbody td.score-cell { font-family: var(--mono); font-weight: 600;
 .flag.HOPL     { background: #1f2429; color: #6e7a8c; }
 .flag.HOP2     { background: #3a1f25; color: #ffb3c5; font-weight:700; }
 .flag.HOPU     { background: #2a2a2a; color: #777; }
+.flag.KIN      { background: rgba(168,85,247,.22); color: #d8b4fe; border: 1px solid rgba(168,85,247,.45); font-weight:700; }
 
 .evchip {
   display: inline-block;
@@ -219,6 +220,8 @@ tbody td.score-cell { font-family: var(--mono); font-weight: 600;
                   border-color: var(--t-intimate); }
 .evchip.neg    { background: #2a1f1f; color: #ff8a8a;
                   border-color: #663030; }
+.evchip.kinship { background: rgba(168,85,247,.16); color: #e9d5ff;
+                  border-color: rgba(168,85,247,.45); font-weight:600; }
 
                   
 .detail {
@@ -825,4 +828,18 @@ main { max-width: 1680px; padding: 1.35em 1.5em 5em; }
   .tab { white-space: nowrap; }
   .target-intel { grid-template-columns: 1fr; }
   #graphContainer { min-height: 620px; height: 72vh; }
+}
+
+.detail-kinship-card {
+  background: linear-gradient(135deg, rgba(88,28,135,.28), rgba(59,7,100,.18)) !important;
+  border: 1px solid rgba(168,85,247,.45) !important;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.detail-kinship-body p {
+  margin: 0 0 .75rem 0;
+  color: #e9d5ff;
+  font-size: .92rem;
+  line-height: 1.45;
 }
