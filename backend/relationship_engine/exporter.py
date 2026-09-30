@@ -95,6 +95,7 @@ def export_csv(arts: Artifacts, registry: PersonRegistry, subdir: str):
         w.writerow([
             'pk', 'username', 'full_name', 'score', 'score_valid',
             'tier', 'tier_rank',
+            'kinship_match', 'kinship_type', 'kinship_token',
             'hop_class', 'phase32_rank',
             'is_private', 'is_verified', 'context_class',
             'cluster_modules_n', 'mfc',
@@ -108,11 +109,15 @@ def export_csv(arts: Artifacts, registry: PersonRegistry, subdir: str):
         ])
         for p in persons:
             fs = p.friendship_status or {}
+            kd = getattr(p, 'kinship_detail', {}) or {}
             w.writerow([
                 p.pk, p.username or '', p.full_name or '',
                 p.score, int(bool(getattr(
                     p, 'score_valid', p.hop_class != 'unknown'))),
                 p.tier or '', p.tier_rank or '',
+                int(bool(getattr(p, 'kinship_match', False))),
+                getattr(p, 'kinship_type', '') or '',
+                kd.get('matched_token', '') or '',
                 p.hop_class or '',
                 p.phase32_rank if p.phase32_rank is not None else '',
                 p.is_private if p.is_private is not None else '',

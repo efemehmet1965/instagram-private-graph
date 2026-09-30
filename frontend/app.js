@@ -3,6 +3,14 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
+const BASE_PATH = window.__BASE_PATH__ || (window.location.pathname.startsWith('/graph') ? '/graph' : '');
+function apiUrl(path) {
+  if (!path || path.startsWith('http://') || path.startsWith('https://')) return path;
+  if (!BASE_PATH) return path;
+  if (path.startsWith(BASE_PATH)) return path;
+  return BASE_PATH + (path.startsWith('/') ? path : '/' + path);
+}
+
                                                                      
                                                                                    
 const UI_ICON_NAMES = new Set([
@@ -109,7 +117,11 @@ const HOP_CLASS_FLAG = {
 
                             
 async function api(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(apiUrl(path), opts);
+  if (r.status === 401) {
+    window.location.href = apiUrl('/login');
+    return null;
+  }
   if (!r.ok) {
     const txt = await r.text().catch(()=>'');
     throw new Error(`${path} -> ${r.status} ${txt.slice(0,200)}`);
@@ -117,7 +129,11 @@ async function api(path, opts) {
   return r.json();
 }
 async function apiText(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(apiUrl(path), opts);
+  if (r.status === 401) {
+    window.location.href = apiUrl('/login');
+    return '';
+  }
   if (!r.ok) throw new Error(`${path} -> ${r.status}`);
   return r.text();
 }
@@ -389,7 +405,7 @@ function avatarProxyUrl(p, ownerUsername='') {
   const username = ownerUsername || (state.data && state.data.username) || state.username;
   const pk = p && p.pk;
   if (!username || !pk || !/^\d{1,30}$/.test(String(pk))) return '';
-  return `/api/users/${encodeURIComponent(username)}/avatar/${encodeURIComponent(pk)}`;
+  return apiUrl(`/api/users/${encodeURIComponent(username)}/avatar/${encodeURIComponent(pk)}`);
 }
 
 let avatarWarmGeneration = 0;
@@ -694,11 +710,24 @@ function personFlags(p) {
   if (p.is_verified) out.push('<span class="flag V">V</span>');
   if (p.context_class === 'real_connection') out.push('<span class="flag R">R</span>');
   else if (p.context_class === 'suggested') out.push('<span class="flag S">S</span>');
+  if (p.kinship_match) {
+    const kind = p.kinship_type === 'exact_surname'
+      ? i18nT('chip.exactSurname', {}, 'Aynı Soyadı')
+      : (p.kinship_type === 'compound_surname'
+          ? i18nT('chip.compoundSurname', {}, 'Bileşik Soyadı')
+          : i18nT('chip.relative', {}, 'Akraba / Aile'));
+    const token = (p.kinship_detail && p.kinship_detail.matched_token) ? ` (${p.kinship_detail.matched_token})` : '';
+    out.push(`<span class="flag KIN" title="${escapeAttr(i18nT('flag.kinshipMatch', {}, 'Akraba / Soyadı Eşleşmesi') + token)}">${uiIcon('users')}<small>${escapeHtml(kind)}</small></span>`);
+  }
   return out.join('');
 }
 
 function personEvidenceChips(p) {
   const chips = [];
+  if (p.kinship_match) {
+    const token = (p.kinship_detail && p.kinship_detail.matched_token) || '';
+    chips.push(`<span class="evchip kinship" title="${escapeAttr(p.kinship_detail && p.kinship_detail.description || 'Akraba / Soyadı Eşleşmesi')}">${uiIcon('users')} ${escapeHtml(token ? `soyadı: ${token}` : 'akraba')}</span>`);
+  }
   if (p.cluster_module_count) {
     const cls = p.cluster_module_count >= 11 ? 'strong' : '';
     chips.push(`<span class="evchip ${cls}">p28[${p.cluster_module_count}/15]</span>`);
@@ -838,6 +867,18 @@ function evidenceSignalDescriptor(source) {
   }
   if (name.includes('phase37') || name.includes('banyan')) {
     return {key:'share-ranking', icon:'external-link', title:'Paylaşım önerisi', text:'Paylaşım sıralamasında görüldü.'};
+  }
+  if (name.startsWith('kinship_')) {
+    if (name.includes('exact_surname')) {
+      return {key:'kinship-exact', icon:'users', title:i18nT('detail.kinshipExactTitle', {}, 'Aynı Soyadı (Akraba)'), text:i18nT('detail.kinshipExactText', {}, 'Hedef ile birebir aynı soyadı paylaşıyor. Aile / akrabalık bağı güçlü bir sinyaldir.')};
+    }
+    if (name.includes('compound_surname')) {
+      return {key:'kinship-compound', icon:'users', title:i18nT('detail.kinshipCompoundTitle', {}, 'Bileşik / Kızlık Soyadı'), text:i18nT('detail.kinshipCompoundText', {}, 'Hedef ile ortak bileşik veya kızlık soyadı tespit edildi.')};
+    }
+    if (name.includes('bio')) {
+      return {key:'kinship-bio', icon:'users', title:i18nT('detail.kinshipBioTitle', {}, 'Biyografide Aile Beyanı'), text:i18nT('detail.kinshipBioText', {}, 'Profil biyografisinde açık akrabalık / aile bağı ifadesi bulundu.')};
+    }
+    return {key:'kinship-other', icon:'users', title:i18nT('detail.kinshipTitle', {}, 'Akraba / Soyadı Bağı'), text:i18nT('detail.kinshipText', {}, 'Kullanıcı adı veya profilinde soyadı eşleşmesi bulundu.')};
   }
   return {key:'other-signal', icon:'info', title:'Destekleyici sinyal', text:'Analiz sırasında bir eşleşme bulundu.'};
 }
@@ -1007,6 +1048,32 @@ function openDetail(pk) {
     <a href="https://www.instagram.com/${encodeURIComponent(p.username||'')}/" target="_blank" rel="noopener">Instagram ${uiIcon('external-link')}</a>
     <a href="https://www.threads.net/@${encodeURIComponent(p.username||'')}" target="_blank" rel="noopener">Threads ${uiIcon('external-link')}</a>
   </div>`);
+
+  if (p.kinship_match) {
+    const kd = p.kinship_detail || {};
+    const matchTypeName = kd.match_type === 'exact_surname'
+      ? i18nT('detail.kinshipExactTitle', {}, 'Aynı Soyadı (Akraba)')
+      : (kd.match_type === 'compound_surname'
+          ? i18nT('detail.kinshipCompoundTitle', {}, 'Bileşik / Kızlık Soyadı')
+          : (kd.match_type === 'bio_declaration'
+              ? i18nT('detail.kinshipBioTitle', {}, 'Biyografide Aile Beyanı')
+              : i18nT('detail.kinshipTitle', {}, 'Kullanıcı Adı / Soyadı Bağı')));
+    body.push(`<section class="detail-section detail-kinship-card">
+      <div class="detail-section-head">
+        <div><span class="detail-eyebrow">Soyadı & Akraba Analizi</span><h3>${escapeHtml(matchTypeName)}</h3></div>
+        <span class="badge t-verified">${escapeHtml((kd.matched_token || 'AKRABA').toUpperCase())}</span>
+      </div>
+      <div class="detail-kinship-body">
+        <p>${escapeHtml(kd.description || 'Hedef profil ile soyadı veya aile bağı eşleşmesi tespit edildi.')}</p>
+        <div class="detail-facts">
+          <div><span>Eşleşen Değer</span><b>${escapeHtml(kd.matched_token || '—')}</b></div>
+          <div><span>Hedef Soyadı</span><b>${escapeHtml(kd.target_surname || '—')}</b></div>
+          <div><span>Aday Soyadı</span><b>${escapeHtml(kd.candidate_surname || '—')}</b></div>
+          <div><span>Güven Derecesi</span><b>${escapeHtml((kd.confidence || 'high').toUpperCase())}</b></div>
+        </div>
+      </div>
+    </section>`);
+  }
 
   body.push(`<section class="detail-probability t-${tier}">
     <div class="detail-probability-head">
@@ -4255,7 +4322,7 @@ async function startQuery() {
   appendLog(`[*] harvest depth (chain-multi): ${queryState.chainMulti}`, 'l-info');
   appendLog(`[*] mode: ${fastMode ? 'FAST (dead probes skipped)' : 'DEEP (all probes)'}`, 'l-info');
 
-  const evt = new EventSource('/api/query?' + params.toString());
+  const evt = new EventSource(apiUrl('/api/query?' + params.toString()));
   queryState.evtSource = evt;
   const isActiveQuery = () => queryState.runId === runId && queryState.evtSource === evt;
 
@@ -4423,4 +4490,6 @@ document.addEventListener('app:localechange', refreshForLocaleChange);
        
 bind();
 bindQuery();
+const logoutEl = $('#logoutLink');
+if (logoutEl) logoutEl.href = apiUrl('/logout');
 loadUsers().catch(e => setStatusKey('status.initError', {message:e.message}, 'err', `Initialization error: ${e.message}`));

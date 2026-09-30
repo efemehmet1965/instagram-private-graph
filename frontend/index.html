@@ -4,8 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Instagram OSINT</title>
-<link rel="stylesheet" href="/static/styles.css?v=20260903r">
-<link rel="stylesheet" href="/static/reference-ui.css?v=20260903r">
+<link rel="stylesheet" href="./static/styles.css?v=20260903r">
+<link rel="stylesheet" href="./static/reference-ui.css?v=20260903r">
+<style>
+  .logout-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0.35rem 0.65rem;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    color: #fca5a5;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .logout-link:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fff;
+  }
+</style>
 </head>
 <body>
 
@@ -84,6 +106,10 @@
         <option value="ru" lang="ru">Русский</option>
       </select>
     </label>
+    <a id="logoutLink" href="logout" class="logout-link" title="Çıkış Yap" aria-label="Çıkış Yap">
+      <svg class="ui-icon" aria-hidden="true"><use href="#ui-lock"></use></svg>
+      <span>Çıkış</span>
+    </a>
   </div>
 
   <section class="central-search" aria-label="Instagram username" data-i18n-aria-label="search.placeholder">
@@ -372,7 +398,7 @@
   <div id="detailBody"></div>
 </aside>
 
-<script src="/static/i18n.js?v=20260903t"></script>
-<script src="/static/app.js?v=20260903t"></script>
+<script src="./static/i18n.js?v=20260903t"></script>
+<script src="./static/app.js?v=20260903t"></script>
 </body>
 </html>

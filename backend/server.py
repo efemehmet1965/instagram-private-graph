@@ -30,6 +30,12 @@ from .relationship_engine import cli as engine_cli
 from .relationship_engine.config import (DEFAULT_ARTIFACT_ROOT, OUTPUT_SUBDIR,
                                            ARTIFACT_FILES)
 from .relationship_engine.loader import TargetScopeConflict
+from .auth import (
+    BASE_PATH, ALLOWED_HOSTS, LOCKOUT_SECONDS, get_client_ip, is_rate_limited,
+    record_failed_attempt, clear_failed_attempts, verify_password,
+    create_session_token, is_authenticated, create_auth_cookie,
+    clear_auth_cookie, render_login_page, is_auth_disabled
+)
 
 
                              
@@ -62,8 +68,8 @@ SECURITY_HEADERS = {
         "default-src 'self'; base-uri 'none'; object-src 'none'; "
         "frame-src 'none'; frame-ancestors 'none'; form-action 'self'; "
         "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; font-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; "
         "connect-src 'self'; media-src 'none'; worker-src 'none'"
     ),
 }
@@ -84,10 +90,38 @@ def _valid_username(username: str) -> bool:
     return bool(USERNAME_RE.fullmatch(username or ''))
 
 
+def _load_env_file():
+    """Uygulama dizinindeki .env dosyasini os.environ'a yukle."""
+    env_candidates = (
+        os.environ.get('IG_ENV_FILE'),
+        os.path.join(APP_DIR, '.env'),
+    )
+    env_path = next((path for path in env_candidates if path and os.path.isfile(path)), None)
+    if not env_path:
+        return
+    try:
+        with open(env_path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, v = line.split('=', 1)
+                k, v = k.strip(), v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                    v = v[1:-1]
+                if k not in os.environ:
+                    os.environ[k] = v
+    except OSError:
+        pass
+
+
+_load_env_file()
+
+
 def _is_loopback_hostname(hostname: str) -> bool:
     """Accept only explicit loopback names/addresses (no DNS aliases)."""
     host = str(hostname or '').strip().lower().rstrip('.')
-    if host == 'localhost':
+    if host in ('localhost', '127.0.0.1', '::1'):
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -95,8 +129,25 @@ def _is_loopback_hostname(hostname: str) -> bool:
         return False
 
 
+def _is_allowed_host(host: str) -> bool:
+    """Istemci veya proxy Host/Origin degerinin guvenilir olup olmadigini test et."""
+    h = str(host or '').strip().lower().rstrip('.')
+    if not h:
+        return False
+    if '*' in ALLOWED_HOSTS:
+        return True
+    if _is_loopback_hostname(h) or h == 'osint':
+        return True
+    if h in ALLOWED_HOSTS:
+        return True
+    for allowed in ALLOWED_HOSTS:
+        if h == allowed or h.endswith('.' + allowed):
+            return True
+    return False
+
+
 def _parse_host_header(value: str, expected_port: int):
-    """Return normalized ``(host, port)`` for a valid local Host header."""
+    """Host basligini parse et ve izin verilenler listesiyle dogrula."""
     raw = str(value or '').strip()
     if (not raw or ',' in raw or '/' in raw or '\\' in raw
             or '?' in raw or '#' in raw):
@@ -107,16 +158,11 @@ def _parse_host_header(value: str, expected_port: int):
         port = parsed.port
     except (TypeError, ValueError):
         return None
-    if (parsed.username is not None or parsed.password is not None
-            or not _is_loopback_hostname(host)):
+    if parsed.username is not None or parsed.password is not None:
         return None
-    if port is None:
-        if expected_port not in (80, 443):
-            return None
-        port = expected_port
-    if port != expected_port:
+    if not _is_allowed_host(host):
         return None
-    return host, port
+    return host, (port or expected_port)
 
 
 def _valid_host_header(value: str, expected_port: int) -> bool:
@@ -124,34 +170,24 @@ def _valid_host_header(value: str, expected_port: int) -> bool:
 
 
 def _same_origin_request(handler) -> bool:
-    """Reject browser cross-site requests to state-changing local routes."""
+    """Browser CSRF korumasi: Reverse proxy ve HTTPS uyumlu."""
     fetch_site = str(handler.headers.get('Sec-Fetch-Site') or '').lower()
     if fetch_site and fetch_site not in ('same-origin', 'none'):
         return False
 
     origin = str(handler.headers.get('Origin') or '').strip()
     if not origin:
-                                                                               
         return True
     if origin.lower() == 'null':
         return False
 
-    expected_port = int(handler.server.server_address[1])
-    host_info = _parse_host_header(handler.headers.get('Host'), expected_port)
-    if host_info is None:
-        return False
     try:
         parsed = urllib.parse.urlsplit(origin)
         origin_host = (parsed.hostname or '').lower().rstrip('.')
-        origin_port = parsed.port or (80 if parsed.scheme == 'http' else 443)
     except (TypeError, ValueError):
         return False
-    return (parsed.scheme == 'http'
-            and not parsed.username and not parsed.password
-            and parsed.path in ('', '/')
-            and not parsed.query and not parsed.fragment
-            and origin_host == host_info[0]
-            and origin_port == host_info[1])
+
+    return _is_allowed_host(origin_host)
 
 
 def _safe_join(base: str, *parts: str) -> str | None:
@@ -966,6 +1002,17 @@ def _file(path: str) -> tuple[int, dict, bytes]:
                        
                                                                              
 
+def _html(status, html_text, cookie=None) -> tuple[int, dict, bytes]:
+    body = html_text.encode('utf-8')
+    headers = {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+    }
+    if cookie:
+        headers['Set-Cookie'] = cookie
+    return (status, headers, body)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'RelEngineWebUI/1.0'
 
@@ -989,6 +1036,16 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _redirect(self, location, cookie=None):
+        self.send_response(303)
+        self.send_header('Location', location)
+        if cookie:
+            self.send_header('Set-Cookie', cookie)
+        for key, value in SECURITY_HEADERS.items():
+            self.send_header(key, value)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     def _dispatch(self, method):
         expected_port = int(self.server.server_address[1])
         if not _valid_host_header(self.headers.get('Host'), expected_port):
@@ -996,40 +1053,101 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         url = urllib.parse.urlparse(self.path)
-        path = url.path
+        raw_path = url.path
         qs = urllib.parse.parse_qs(url.query)
 
-        if ((path == '/api/query' or method == 'POST')
+        # Base path normalizasyonu: e.g. BASE_PATH = '/graph'
+        subpath = raw_path
+        if BASE_PATH and subpath.startswith(BASE_PATH):
+            subpath = subpath[len(BASE_PATH):]
+            if not subpath:
+                self._redirect(f"{BASE_PATH}/")
+                return
+        if not subpath:
+            subpath = '/'
+
+        login_url = f"{BASE_PATH}/login" if BASE_PATH else "/login"
+        home_url = f"{BASE_PATH}/" if BASE_PATH else "/"
+
+        # /login rotasi
+        if subpath == '/login':
+            client_ip = get_client_ip(self)
+            if method == 'GET':
+                if is_authenticated(self):
+                    self._redirect(home_url)
+                    return
+                html_content = render_login_page(base_path=BASE_PATH)
+                self._serve(*_html(200, html_content))
+                return
+            elif method == 'POST':
+                try:
+                    content_len = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(min(content_len, 4096)).decode('utf-8', errors='replace')
+                    form_data = urllib.parse.parse_qs(body)
+                    password = (form_data.get('password', [''])[0] or '').strip()
+                except Exception:
+                    password = ''
+
+                if verify_password(password):
+                    clear_failed_attempts(client_ip)
+                    token = create_session_token(client_ip)
+                    cookie = create_auth_cookie(token, base_path=BASE_PATH)
+                    self._redirect(home_url, cookie=cookie)
+                    return
+                else:
+                    # Otomasyon/bot saldirilarini engellemek icin 1 saniyelik guvenli bekleme
+                    time.sleep(1.0)
+                    msg = "Hatali sifre girdiniz. Lutfen tekrar deneyin."
+                    html_content = render_login_page(error_msg=msg, base_path=BASE_PATH)
+                    self._serve(*_html(401, html_content))
+                    return
+            else:
+                self._serve(*_json(405, {'error': 'method_not_allowed'}))
+                return
+
+        # /logout rotasi
+        if subpath == '/logout':
+            cookie = clear_auth_cookie(base_path=BASE_PATH)
+            self._redirect(login_url, cookie=cookie)
+            return
+
+        # Oturum kontrolu (Statik dosyalar haric tum rotalar korunur)
+        if not subpath.startswith('/static/') and not is_authenticated(self):
+            if subpath.startswith('/api/'):
+                self._serve(*_json(401, {'ok': False, 'error': 'unauthorized', 'msg': 'Lutfen giris yapin'}))
+                return
+            self._redirect(login_url)
+            return
+
+        # State-changing ve SSE istekleri icin same-origin kontrolu
+        if ((subpath == '/api/query' or method == 'POST')
                 and not _same_origin_request(self)):
             self._serve(*_json(403, {'error': 'cross_site_request_rejected'}))
             return
 
-                    
+        # API rotalari eslestirme
         for pattern, mm, fn in API_ROUTES:
             if mm != method:
                 continue
-            m = pattern.match(path)
+            m = pattern.match(subpath)
             if not m:
                 continue
             try:
                 result = fn(self, m.groupdict(), qs)
             except Exception:
-                _log_current_exception(f'unhandled request error: {method} {path}')
+                _log_current_exception(f'unhandled request error: {method} {subpath}')
                 result = _json(500, {'error': 'internal_server_error'})
             if result is None:
-                                                                   
                 return
             self._serve(*result)
             return
 
-                              
         if method != 'GET':
             self._serve(*_json(405, {'error': 'method_not_allowed'}))
             return
 
-                                   
-        if path.startswith('/static/'):
-            rel = path[len('/static/'):].lstrip('/')
+        if subpath.startswith('/static/'):
+            rel = subpath[len('/static/'):].lstrip('/')
             full = _safe_join(STATIC_DIR, rel)
             if full is None:
                 self._serve(*_text(403, 'forbidden'))
@@ -1037,15 +1155,12 @@ class Handler(BaseHTTPRequestHandler):
             self._serve(*_file(full))
             return
 
-               
-        if path == '/' or path == '/index.html':
+        if subpath in ('/', '/index.html'):
             self._serve(*_file(os.path.join(STATIC_DIR, 'index.html')))
             return
 
-                                                               
-        if path.startswith('/download/'):
-                                      
-            parts = path[len('/download/'):].split('/', 1)
+        if subpath.startswith('/download/'):
+            parts = subpath[len('/download/'):].split('/', 1)
             if len(parts) == 2:
                 u, fn = parts
                 if not _valid_username(u) or os.path.basename(fn) != fn:
@@ -1068,41 +1183,38 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch('POST')
 
 
-                                                                             
-      
-                                                                             
-
 def main():
-    p = argparse.ArgumentParser(description='Instagram OSINT local web app')
-    p.add_argument('--port', type=int, default=8000)
-    p.add_argument('--host', default='127.0.0.1')
-    p.add_argument('--artifacts', default=DEFAULT_ARTIFACT_ROOT,
+    p = argparse.ArgumentParser(description='Instagram OSINT web app')
+    p.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8000)))
+    p.add_argument('--host', default=os.environ.get('HOST', '127.0.0.1'))
+    p.add_argument('--artifacts', default=os.environ.get('IG_ARTIFACT_ROOT', DEFAULT_ARTIFACT_ROOT),
                     help='artifact root dir')
     args = p.parse_args()
 
-    if not _is_loopback_hostname(args.host):
-        p.error('--host must be localhost or an explicit loopback IP address')
+    if not (_is_loopback_hostname(args.host) or args.host in ('0.0.0.0', '::') or _is_allowed_host(args.host)):
+        p.error('--host must be localhost, 0.0.0.0, or an allowed host')
 
     if not os.path.isdir(args.artifacts):
-        print(f'[!] artifact dir yok: {args.artifacts}', file=sys.stderr)
-        sys.exit(1)
+        os.makedirs(args.artifacts, exist_ok=True)
 
     _CFG['artifacts_root'] = os.path.abspath(args.artifacts)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    url = f'http://{args.host}:{args.port}/'
+    url_host = f'[{args.host}]' if ':' in args.host else args.host
+    url = f'http://{url_host}:{args.port}/'
+    if BASE_PATH:
+        url = f'{url.rstrip("/")}{BASE_PATH}/'
     print(f'[*] Instagram OSINT web app')
     print(f'[*] artifacts: {_CFG["artifacts_root"]}')
-    print(f'[*] listening  {url}')
-    print(f'[*] users      {url}api/users')
+    print(f'[*] listening: {url}')
+    print(f'[*] base path: {BASE_PATH or "/"}')
+    print(f'[*] auth: {"dev/disabled" if is_auth_disabled() else "enabled (password protected)"}')
     print(f'[*] CTRL+C to stop')
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print('\n[*] shutting down')
     finally:
-                                                                    
-                                                                   
         srv.server_close()
 
 

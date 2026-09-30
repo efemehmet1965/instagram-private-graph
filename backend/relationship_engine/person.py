@@ -138,6 +138,11 @@ class Person:
     avatar_ts_close: bool = False
     avatar_ts_delta_seconds: int | None = None
 
+    # Kinship & Surname Engine
+    kinship_match: bool = False
+    kinship_type: str | None = None
+    kinship_detail: dict = field(default_factory=dict)
+
                         
     evidence: list[Evidence] = field(default_factory=list)
     score: float = 0.0

@@ -153,10 +153,9 @@ def main() -> None:
     if sys.version_info < (3, 10):
         raise SystemExit('[X] Python 3.10 veya ustu gerekli')
 
-    if not _is_loopback_host(args.host):
+    if not (_is_loopback_host(args.host) or args.host in ('0.0.0.0', '::')):
         raise SystemExit(
-            '[X] This unauthenticated application is localhost-only. '
-            'Use 127.0.0.1, localhost, or ::1.')
+            '[X] Host must be localhost, 127.0.0.1, or 0.0.0.0')
     if not 1 <= args.port <= 65535:
         raise SystemExit('[X] Port must be between 1 and 65535')
 
