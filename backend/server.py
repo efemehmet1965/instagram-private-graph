@@ -1082,8 +1082,11 @@ class Handler(BaseHTTPRequestHandler):
             elif method == 'POST':
                 is_blocked, remaining_secs = is_rate_limited(client_ip)
                 if is_blocked:
-                    minutes = (remaining_secs // 60) + 1
-                    msg = f"Cok fazla hatali deneme yapildi. Lutfen {minutes} dakika sonra tekrar deneyin."
+                    if remaining_secs > 60:
+                        wait_text = f"{remaining_secs // 60 + 1} dakika"
+                    else:
+                        wait_text = f"{max(1, remaining_secs)} saniye"
+                    msg = f"Cok fazla hatali deneme yapildi. Lutfen {wait_text} sonra tekrar deneyin."
                     html_content = render_login_page(error_msg=msg, base_path=BASE_PATH)
                     self._serve(*_html(429, html_content))
                     return
@@ -1105,7 +1108,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     remaining_attempts = record_failed_attempt(client_ip)
                     if remaining_attempts == 0:
-                        msg = f"Hatali sifre! Erisiminiz {LOCKOUT_SECONDS // 60} dakika engellendi."
+                        msg = f"Hatali sifre! Erisiminiz {LOCKOUT_SECONDS} saniye kilitlendi."
                     else:
                         msg = f"Hatali sifre girdiniz. Kalan deneme hakki: {remaining_attempts}"
                     html_content = render_login_page(error_msg=msg, base_path=BASE_PATH)

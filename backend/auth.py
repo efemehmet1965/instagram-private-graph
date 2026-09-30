@@ -20,8 +20,8 @@ import urllib.parse
 BASE_PATH = os.environ.get('BASE_PATH', '/graph').rstrip('/')
 SESSION_COOKIE_NAME = 'graph_session'
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # 7 gun
-MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_SECONDS = 900  # 15 dakika
+MAX_FAILED_ATTEMPTS = int(os.environ.get('MAX_FAILED_ATTEMPTS', 10))
+LOCKOUT_SECONDS = int(os.environ.get('LOCKOUT_SECONDS', 30))  # Varsayilan sadece 30 saniye
 
 # Session Secret Key
 _DEFAULT_SECRET = secrets.token_hex(32)
@@ -47,11 +47,18 @@ def is_auth_disabled() -> bool:
     return os.environ.get('DISABLE_AUTH', '0').strip().lower() in ('1', 'true', 'yes')
 
 
+def is_rate_limit_disabled() -> bool:
+    """Rate limit engellemesini tamamen devre disi birakma bayragi."""
+    return os.environ.get('DISABLE_RATE_LIMIT', '0').strip().lower() in ('1', 'true', 'yes')
+
+
 def get_client_ip(handler) -> str:
-    """Reverse proxy arkasindaki gercek istemci IP adresini bul."""
+    """Reverse proxy ve Cloudflare arkasindaki gercek istemci IP adresini bul."""
+    cf_ip = handler.headers.get('CF-Connecting-IP')
+    if cf_ip:
+        return cf_ip.strip()
     forwarded = handler.headers.get('X-Forwarded-For')
     if forwarded:
-        # Ilk IP istemcinin gercek IP adresidir
         first_ip = forwarded.split(',')[0].strip()
         if first_ip:
             return first_ip
@@ -63,6 +70,8 @@ def get_client_ip(handler) -> str:
 
 def is_rate_limited(ip: str) -> tuple[bool, int]:
     """IP'nin kilitlenip kilitlenmedigini ve kalan sureyi kontrol et."""
+    if is_rate_limit_disabled():
+        return False, 0
     now = time.time()
     with _RATE_LIMIT_LOCK:
         lock_until = _LOCKOUTS.get(ip, 0)
@@ -71,8 +80,8 @@ def is_rate_limited(ip: str) -> tuple[bool, int]:
         if ip in _LOCKOUTS:
             del _LOCKOUTS[ip]
 
-        # Son 5 dakikadaki basarisiz denemeleri temizle
-        attempts = [t for t in _FAILED_ATTEMPTS.get(ip, []) if now - t < 300]
+        # Son 1 dakikadaki basarisiz denemeleri temizle
+        attempts = [t for t in _FAILED_ATTEMPTS.get(ip, []) if now - t < 60]
         _FAILED_ATTEMPTS[ip] = attempts
         if len(attempts) >= MAX_FAILED_ATTEMPTS:
             _LOCKOUTS[ip] = now + LOCKOUT_SECONDS
@@ -83,9 +92,11 @@ def is_rate_limited(ip: str) -> tuple[bool, int]:
 
 def record_failed_attempt(ip: str) -> int:
     """Basarisiz giris denemesini kaydet ve kalan deneme hakkini dondur."""
+    if is_rate_limit_disabled():
+        return MAX_FAILED_ATTEMPTS
     now = time.time()
     with _RATE_LIMIT_LOCK:
-        attempts = [t for t in _FAILED_ATTEMPTS.get(ip, []) if now - t < 300]
+        attempts = [t for t in _FAILED_ATTEMPTS.get(ip, []) if now - t < 60]
         attempts.append(now)
         _FAILED_ATTEMPTS[ip] = attempts
         remaining = max(0, MAX_FAILED_ATTEMPTS - len(attempts))
